@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGIS 平台</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v8.2.0/ol.css">
+    <script src="https://cdn.jsdelivr.net/npm/ol@v8.2.0/dist/ol.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.2/proj4.js"></script>
+    <!-- 引入 Google 登入 API -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; font-family: 'Inter', sans-serif; }
+        #map { width: 100%; height: 100%; background-color: #f3f4f6; }
+        .ol-zoom, .ol-attribution, .ol-rotate { display: none !important; }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+            border-radius: 1rem;
+        }
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+        .custom-scroll::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 10px; }
+    </style>
+</head>
+<body>
+
+    <!-- ========================================== -->
+    <!-- 全螢幕登入遮罩 -->
+    <!-- ========================================== -->
+    <div id="login-overlay" class="fixed inset-0 bg-gray-900 bg-opacity-75 z-[9999] flex items-center justify-center backdrop-blur-sm">
+        <div class="bg-white p-8 rounded-xl shadow-2xl flex flex-col items-center gap-4 max-w-sm w-full mx-4">
+            <h2 class="text-2xl font-bold text-gray-800">WebGIS 圖資系統</h2>
+            <p class="text-sm text-gray-500 text-center mb-2">本系統具備存取限制<br>請使用已授權的 Google 帳號登入</p>
+            <div id="google-login-button"></div>
+            <div id="login-error-msg" class="text-red-500 text-sm font-bold hidden mt-2 text-center"></div>
+        </div>
+    </div>
+
+    <!-- 網頁內容開始 -->
+    <div id="map"></div>
+
+    <!-- 右上角：搜尋、抽屜選單與多重地段控制器 -->
+    <div class="fixed top-6 right-6 z-30 flex flex-col items-end w-[340px] pointer-events-none">
+        <div class="glass-panel w-full flex items-center p-1.5 shadow-lg pointer-events-auto relative z-50">
+            <button id="geo-menu-btn" class="p-2 text-gray-500 hover:text-blue-600 transition-colors rounded-md hover:bg-gray-100" title="展開地政事務所清單">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+            </button>
+            <div class="w-px h-5 bg-gray-300 mx-1"></div>
+            <div class="flex-1 relative">
+                <input type="text" id="geo-search-input" class="w-full bg-transparent border-none focus:ring-0 text-sm px-2 py-1 text-gray-700 outline-none placeholder-gray-400" placeholder="輸入段代碼或名稱 (如0001)..." autocomplete="off">
+                <div id="geo-autocomplete" class="hidden absolute top-full left-0 right-0 mt-2 glass-panel max-h-60 overflow-y-auto custom-scroll shadow-xl z-40 flex flex-col p-1 empty:hidden"></div>
+            </div>
+            <button id="search-btn" class="p-2 text-gray-400 hover:text-blue-600 transition-colors cursor-pointer" title="搜尋地段">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+            </button>
+        </div>
+
+        <div id="geo-drawer" class="hidden w-full mt-2 glass-panel overflow-hidden shadow-xl pointer-events-auto relative h-72 transition-all">
+            <div id="drawer-level-1" class="absolute inset-0 flex flex-col transition-transform duration-300 ease-in-out transform translate-x-0 bg-white/50">
+                <div class="bg-gray-100/80 px-3 py-2 text-xs font-bold text-gray-500 border-b border-gray-200">選擇地政事務所</div>
+                <div class="flex-1 overflow-y-auto custom-scroll p-2 space-y-1" id="l1-list">
+                    <div class="p-2 text-xs text-gray-400 text-center mt-4">圖資載入中...</div>
+                </div>
+            </div>
+            
+            <div id="drawer-level-2" class="absolute inset-0 flex flex-col transition-transform duration-300 ease-in-out transform translate-x-full bg-white/50">
+                <div class="bg-blue-50/80 px-3 py-2 flex items-center justify-between border-b border-blue-100">
+                    <button id="drawer-back-btn" class="text-blue-600 hover:text-blue-800 flex items-center text-xs font-bold transition-colors">
+                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg> 返回
+                    </button>
+                    <span id="l2-title" class="text-xs font-bold text-gray-700"></span>
+                </div>
+                <div class="flex-1 overflow-y-auto custom-scroll p-2 space-y-1" id="l2-list">
+                </div>
+            </div>
+        </div>
+
+        <div id="loaded-sections-container" class="w-full mt-2 flex flex-col gap-2 empty:hidden pointer-events-auto max-h-[50vh] overflow-y-auto custom-scroll pr-1">
+        </div>
+    </div>
+
+    <!-- 左下角：比例尺與座標資訊列 -->
+    <div class="fixed bottom-4 left-4 md:bottom-6 md:left-6 glass-panel px-3 py-2 md:px-5 md:py-3 flex items-center gap-2 md:gap-5 text-sm text-gray-700 select-none z-10 transition-all">
+        <div class="flex items-center gap-1 relative group" title="點擊輸入或選擇指定比例尺">
+            <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9"></path></svg>
+            <span class="font-medium text-gray-500 hidden sm:inline">1:</span>
+            <input type="text" id="scale-input" class="bg-transparent w-16 md:w-20 outline-none border-b-2 border-transparent hover:border-gray-300 focus:border-blue-500 text-center transition-colors font-semibold text-gray-800" value="--">
+            <div id="scale-dropdown" class="hidden absolute bottom-full left-0 mb-4 w-28 md:w-32 glass-panel border border-gray-200 overflow-hidden shadow-2xl transition-all flex flex-col py-1"></div>
+        </div>
+        <div class="hidden md:block w-px h-5 bg-gray-300"></div>
+        <div id="coord-display" class="hidden md:flex items-center gap-2 cursor-pointer hover:text-blue-600 transition-colors" title="點擊切換座標系統">
+            <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+            <span id="coord-text" class="font-mono tracking-tight font-medium w-64 text-center">載入中...</span>
+        </div>
+    </div>
+
+    <!-- 右下角：圖層控制鈕與展開面板 -->
+    <div class="fixed bottom-4 right-4 md:bottom-6 md:right-6 z-20 flex flex-col items-end">
+        <div id="layer-panel" class="glass-panel w-[90vw] sm:w-72 mb-3 md:mb-4 p-4 hidden opacity-0 transition-opacity duration-300 transform translate-y-2">
+            <div class="max-h-[60vh] overflow-y-auto custom-scroll pr-2">
+                <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">業務圖層</h3>
+                <div class="space-y-2 mb-6" id="overlay-layers-container"></div>
+                <hr class="border-gray-200 mb-4">
+                <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">底圖切換</h3>
+                <div class="space-y-2" id="base-layers-container"></div>
+            </div>
+        </div>
+
+        <div class="flex gap-2 md:gap-3">
+            <button id="locate-btn" class="glass-panel w-12 h-12 md:w-14 md:h-14 flex items-center justify-center text-gray-700 hover:text-blue-600 hover:scale-105 transition-all shadow-lg active:scale-95 group relative" title="顯示我的位置">
+                <svg class="w-5 h-5 md:w-6 md:h-6 group-hover:animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" class="hidden loading-icon"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" class="target-icon"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" class="target-icon"></path>
+                </svg>
+                <span id="locate-error-dot" class="absolute top-0 right-0 -mt-1 -mr-1 flex h-3 w-3 hidden">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                </span>
+            </button>
+            <button id="layer-toggle-btn" class="glass-panel w-12 h-12 md:w-14 md:h-14 flex items-center justify-center text-gray-700 hover:text-blue-600 hover:scale-105 transition-all shadow-lg active:scale-95">
+                <svg class="w-6 h-6 md:w-7 md:h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"></path></svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- 右鍵選單 -->
+    <div id="context-menu" class="hidden absolute glass-panel min-w-[200px] shadow-2xl py-1 z-50 text-sm overflow-hidden border border-gray-100">
+        <div class="px-4 py-2 text-xs font-bold text-gray-400 border-b border-gray-100 uppercase tracking-wider bg-white/50">複製游標座標</div>
+        <button class="w-full text-left px-4 py-2 hover:bg-gray-100/80 hover:text-blue-600 transition-colors flex justify-between items-center group" onclick="copyCoord('twd97')">
+            TWD97 <span class="text-green-500 hidden text-xs font-bold group-hover:block" id="copy-twd97-feedback">複製!</span>
+        </button>
+        <button class="w-full text-left px-4 py-2 hover:bg-gray-100/80 hover:text-blue-600 transition-colors flex justify-between items-center group" onclick="copyCoord('wgs84')">
+            WGS84 (度) <span class="text-green-500 hidden text-xs font-bold group-hover:block" id="copy-wgs84-feedback">複製!</span>
+        </button>
+        <button class="w-full text-left px-4 py-2 hover:bg-gray-100/80 hover:text-blue-600 transition-colors flex justify-between items-center group" onclick="copyCoord('dms')">
+            WGS84 (度分秒) <span class="text-green-500 hidden text-xs font-bold group-hover:block" id="copy-dms-feedback">複製!</span>
+        </button>
+        <div class="border-t border-gray-200 my-1"></div>
+        <button class="w-full text-left px-4 py-2.5 hover:bg-blue-50 hover:text-blue-600 transition-colors flex items-center gap-2 font-medium text-gray-800" onclick="navigateToPoint()">
+            <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+            導航到此處
+        </button>
+    </div>
+
+    <script>
+        // ==========================================
+        //  系統設定與 OAuth 登入邏輯
+        // ==========================================
+        
+        // ★★★ 請替換為您的真實網址與 ID ★★★
+        const API_URL = 'https://script.google.com/macros/s/AKfycbx4i4iMtOqghvbOtuHKVDFIo7-_CXdjAfVdFzgxRB2PUzsPs1_Stqy8PDb16CLwViNR/exec';
+        const GOOGLE_CLIENT_ID = '77076022949-0lllsvhbaaotn2g0eus43a13kqljhb6u.apps.googleusercontent.com';
+        // ★★★★★★★★★★★★★★★★★★★★★★★★★★
+
+        let userAuthToken = ''; // 動態存放 Google 登入後的 JWT 憑證
+
+        // 初始化 Google 登入按鈕
+        window.onload = function () {
+            if (typeof google === 'undefined') {
+                document.getElementById('login-error-msg').innerText = "無法載入 Google 登入服務，請檢查網路。";
+                document.getElementById('login-error-msg').classList.remove('hidden');
+                return;
+            }
+            google.accounts.id.initialize({
+                client_id: GOOGLE_CLIENT_ID,
+                callback: handleCredentialResponse
+            });
+            google.accounts.id.renderButton(
+                document.getElementById("google-login-button"),
+                { theme: "outline", size: "large", width: 250 } 
+            );
+        };
+
+        // 登入成功回呼
+        function handleCredentialResponse(response) {
+            userAuthToken = response.credential;
+            document.getElementById('login-error-msg').classList.add('hidden');
+            
+            // 登入成功後，帶著 Token 去要選單資料，如果白名單驗證過關就會回傳資料
+            fetchMenuData(); 
+        }
+
+        // ==========================================
+        //  地圖與圖層初始化
+        // ==========================================
+        function toDMS(coordinate, isLat) {
+            const val = Math.abs(coordinate);
+            const degrees = Math.floor(val);
+            const minutes = Math.floor((val - degrees) * 60);
+            const seconds = ((val - degrees - minutes / 60) * 3600).toFixed(1);
+            let dir = '';
+            if (isLat) dir = coordinate >= 0 ? 'N' : 'S';
+            else dir = coordinate >= 0 ? 'E' : 'W';
+            return `${degrees}° ${minutes}' ${seconds}" ${dir}`;
+        }
+
+        proj4.defs("EPSG:3826", "+proj=tmerc +lat_0=0 +lon_0=121 +k=0.9999 +x_0=250000 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs");
+        ol.proj.proj4.register(proj4);
+
+        const NLSC_WMS_URL = 'https://maps.nlsc.gov.tw/S_Maps/wms';
+        const baseLayersInfo = [
+            { id: 'EMAP', name: '臺灣通用電子地圖', layer: 'EMAP', visible: true },
+            { id: 'EMAP5', name: '臺灣通用電子地圖(套疊等高線)', layer: 'EMAP5_OPENDATA', visible: false },
+            { id: 'EMAP6', name: '臺灣通用電子地圖(等高線+門牌)', layer: 'EMAP5', visible: false },
+            { id: 'PHOTO2', name: '正射影像圖(通用)', layer: 'PHOTO2', visible: false },
+            { id: 'PHOTO_MIX', name: '正射影像(混合)', layer: 'PHOTO_MIX', visible: false },
+            { id: 'B5000', name: '1/5000基本地形圖', layer: 'B5000', visible: false },
+            { id: 'BLANK', name: '空白底圖', layer: '', visible: false }
+        ];
+
+        const overlayLayersInfo = [
+            { id: 'COUNTY', name: '縣市界', layer: 'CITY' },
+            { id: 'TOWN', name: '鄉鎮區界', layer: 'TOWN' },
+            { id: 'VILLAGE', name: '村里界', layer: 'Village' },
+            { id: 'ROAD', name: '道路路網', layer: 'ROAD' },
+            { id: 'LAND_OFFICE', name: '地政事務所轄區圖', layer: 'LandOffice' },
+            { id: 'LU', name: '國土利用現況調查成果圖', layer: 'LUIMAP' },
+            { id: 'ASPECT', name: '坡向圖', layer: 'MOI_ASPECT' }
+        ];
+
+        const mapLayers = {}; 
+        const olLayersArray = [];
+
+        baseLayersInfo.forEach((info) => {
+            let layer = info.id === 'BLANK' 
+                ? new ol.layer.Tile({ visible: info.visible, zIndex: 0 })
+                : new ol.layer.Tile({ source: new ol.source.TileWMS({ url: NLSC_WMS_URL, params: { 'LAYERS': info.layer, 'TILED': true }, serverType: 'geoserver' }), visible: info.visible, zIndex: 0 });
+            mapLayers[info.id] = layer;
+            olLayersArray.push(layer);
+        });
+
+        overlayLayersInfo.forEach((info) => {
+            const layer = new ol.layer.Tile({ source: new ol.source.TileWMS({ url: NLSC_WMS_URL, params: { 'LAYERS': info.layer, 'TILED': true, 'TRANSPARENT': true }, serverType: 'geoserver' }), visible: false, zIndex: 10 });
+            mapLayers[info.id] = layer;
+            olLayersArray.push(layer);
+        });
+
+        const loadedSectionLayers = {};
+        const centerCoords = ol.proj.fromLonLat([121.1506, 22.7554]); 
+        const map = new ol.Map({ target: 'map', layers: olLayersArray, view: new ol.View({ center: centerCoords, zoom: 16, minZoom: 6, maxZoom: 20 }), controls: [] });
+
+        // ==========================================
+        //  選單與資料載入邏輯
+        // ==========================================
+        let segmentsData = [];
+        let allSectionsFlat = [];
+        let officesMap = {};
+
+        const searchInput = document.getElementById('geo-search-input');
+        const autocompletePanel = document.getElementById('geo-autocomplete');
+        const menuBtn = document.getElementById('geo-menu-btn');
+        const geoDrawer = document.getElementById('geo-drawer');
+        const drawerL1 = document.getElementById('drawer-level-1');
+        const drawerL2 = document.getElementById('drawer-level-2');
+        const l1List = document.getElementById('l1-list');
+        const l2List = document.getElementById('l2-list');
+        const l2Title = document.getElementById('l2-title');
+        const drawerBackBtn = document.getElementById('drawer-back-btn');
+        const loadedSectionsContainer = document.getElementById('loaded-sections-container');
+        const searchBtn = document.getElementById('search-btn');
+
+        let isDrawerOpen = false;
+
+        async function fetchMenuData() {
+            try {
+                // 將靜態 token 改為 Google JWT token
+                const response = await fetch(`${API_URL}?action=getMenu&token=${userAuthToken}`);
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    // 驗證通過，解除遮罩
+                    document.getElementById('login-overlay').classList.add('hidden');
+                    segmentsData = result.data;
+                    processDataAndRenderMenu();
+                } else {
+                    // 驗證失敗 (可能是沒在白名單內)
+                    document.getElementById('login-error-msg').innerText = result.error;
+                    document.getElementById('login-error-msg').classList.remove('hidden');
+                    userAuthToken = ''; // 清除無效 token
+                }
+            } catch (error) {
+                console.error('連線失敗:', error);
+                document.getElementById('login-error-msg').innerText = "與伺服器連線失敗，請稍後再試。";
+                document.getElementById('login-error-msg').classList.remove('hidden');
+            }
+        }
+
+        function processDataAndRenderMenu() {
+            officesMap = {};
+            allSectionsFlat = [];
+            segmentsData.forEach(item => {
+                const officeName = item.office;
+                const sectionData = { id: item.code, name: `${item.code}-${item.name}`, office: officeName, layers: item.layers };
+                if (!officesMap[officeName]) officesMap[officeName] = [];
+                officesMap[officeName].push(sectionData);
+                allSectionsFlat.push(sectionData);
+            });
+
+            l1List.innerHTML = '';
+            Object.keys(officesMap).forEach(officeName => {
+                const btn = document.createElement('button');
+                btn.className = 'w-full text-left px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md transition-colors flex justify-between items-center';
+                btn.innerHTML = `${officeName} <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>`;
+                btn.addEventListener('click', () => {
+                    drawerL1.classList.replace('translate-x-0', '-translate-x-full');
+                    drawerL2.classList.replace('translate-x-full', 'translate-x-0');
+                    l2Title.innerText = officeName;
+                    l2List.innerHTML = '';
+                    officesMap[officeName].forEach(sec => {
+                        const secBtn = document.createElement('button');
+                        secBtn.className = 'w-full text-left px-3 py-2 text-sm font-bold text-gray-700 hover:bg-blue-50 hover:text-blue-700 rounded-md transition-colors border border-transparent hover:border-blue-100';
+                        secBtn.innerText = sec.name;
+                        secBtn.addEventListener('click', () => loadSectionData(sec));
+                        l2List.appendChild(secBtn);
+                    });
+                });
+                l1List.appendChild(btn);
+            });
+        }
+
+        searchInput.addEventListener('input', (e) => {
+            const val = e.target.value.trim();
+            autocompletePanel.innerHTML = ''; 
+            if (val && isDrawerOpen) toggleDrawer(false);
+            if (!val) { autocompletePanel.classList.add('hidden'); return; }
+
+            const results = allSectionsFlat.filter(s => s.id.includes(val) || s.name.includes(val) || s.office.includes(val)).slice(0, 10); 
+            if (results.length > 0) {
+                autocompletePanel.classList.remove('hidden');
+                results.forEach(res => {
+                    const item = document.createElement('div');
+                    item.className = 'px-3 py-2 cursor-pointer hover:bg-blue-50 transition-colors rounded-md group';
+                    item.innerHTML = `<div class="text-sm font-bold text-gray-800 group-hover:text-blue-700">${res.name}</div><div class="text-xs text-gray-500">${res.office}</div>`;
+                    item.addEventListener('click', () => loadSectionData(res));
+                    autocompletePanel.appendChild(item);
+                });
+            } else {
+                autocompletePanel.classList.remove('hidden');
+                autocompletePanel.innerHTML = '<div class="px-3 py-2 text-sm text-gray-400 text-center">找不到符合的地段</div>';
+            }
+        });
+
+        document.addEventListener('click', (e) => {
+            if (e.target !== searchInput && !autocompletePanel.contains(e.target)) autocompletePanel.classList.add('hidden');
+        });
+
+        function executeSearch() {
+            const val = searchInput.value.trim();
+            if (!val) return;
+            let match = allSectionsFlat.find(s => s.id === val) || allSectionsFlat.find(s => s.id.includes(val) || s.name.includes(val) || s.office.includes(val));
+            if (match) loadSectionData(match);
+            else alert(`找不到代碼或名稱包含 [${val}] 的地段。`);
+        }
+
+        searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); executeSearch(); } });
+        searchBtn.addEventListener('click', () => executeSearch());
+
+        function toggleDrawer(forceState = null) {
+            isDrawerOpen = forceState !== null ? forceState : !isDrawerOpen;
+            if (isDrawerOpen) {
+                geoDrawer.classList.remove('hidden');
+                drawerL1.classList.replace('-translate-x-full', 'translate-x-0');
+                drawerL2.classList.replace('translate-x-0', 'translate-x-full');
+            } else {
+                geoDrawer.classList.add('hidden');
+            }
+        }
+
+        menuBtn.addEventListener('click', () => toggleDrawer());
+        drawerBackBtn.addEventListener('click', () => {
+            drawerL1.classList.replace('-translate-x-full', 'translate-x-0');
+            drawerL2.classList.replace('translate-x-0', 'translate-x-full');
+        });
+
+        async function loadSectionData(sectionData) {
+            toggleDrawer(false);
+            autocompletePanel.classList.add('hidden');
+            searchInput.value = ''; 
+            
+            if (loadedSectionLayers[sectionData.id]) {
+                alert(`地段 [${sectionData.name}] 已經載入在地圖上囉！`);
+                return;
+            }
+            
+            const layers = {
+                parcel: new ol.layer.Vector({ source: new ol.source.Vector(), zIndex: 20, visible: true }),
+                boundary: new ol.layer.Vector({ source: new ol.source.Vector(), zIndex: 21, visible: true }),
+                controlpoint: new ol.layer.Vector({ source: new ol.source.Vector(), zIndex: 22, visible: true })
+            };
+            
+            layers.parcel.setStyle(function(feature, resolution) {
+                const labelText = feature.get('Text') || ''; 
+                const textStyle = resolution < 1.5 ? new ol.style.Text({
+                    text: labelText.toString(), font: 'bold 13px "Inter", "Microsoft JhengHei", sans-serif',
+                    fill: new ol.style.Fill({ color: '#1e3a8a' }), stroke: new ol.style.Stroke({ color: '#ffffff', width: 3 }), overflow: true
+                }) : null;
+                return new ol.style.Style({ stroke: new ol.style.Stroke({ color: '#3b82f6', width: 1 }), fill: new ol.style.Fill({ color: 'rgba(59, 130, 246, 0.1)' }), text: textStyle });
+            });
+
+            layers.boundary.setStyle(new ol.style.Style({ stroke: new ol.style.Stroke({ color: '#ef4444', width: 2 }) }));
+
+            layers.controlpoint.setStyle(function(feature, resolution) {
+                const labelText = feature.get('Text') || '';
+                const textStyle = resolution < 5 ? new ol.style.Text({
+                    text: labelText.toString(), font: 'bold 12px "Inter", "Microsoft JhengHei", sans-serif',
+                    fill: new ol.style.Fill({ color: '#713f12' }), stroke: new ol.style.Stroke({ color: '#ffffff', width: 3 }), offsetY: -12 
+                }) : null;
+                return new ol.style.Style({ image: new ol.style.Circle({ radius: 5, fill: new ol.style.Fill({ color: '#eab308' }), stroke: new ol.style.Stroke({ color: '#000', width: 1 }) }), text: textStyle });
+            });
+
+            map.addLayer(layers.parcel);
+            map.addLayer(layers.boundary);
+            map.addLayer(layers.controlpoint);
+            loadedSectionLayers[sectionData.id] = layers;
+
+            const card = document.createElement('div');
+            card.className = 'glass-panel p-2 shadow-xl flex flex-col gap-1 transition-all duration-300';
+            card.id = `section-card-${sectionData.id}`;
+            card.innerHTML = `
+                <div class="flex items-center justify-between px-1 border-b border-gray-200/50 pb-1 mb-1">
+                    <span class="text-base font-bold text-blue-700 truncate">${sectionData.name}</span>
+                    <button class="text-gray-400 hover:text-red-500 transition-colors p-1 rounded-md hover:bg-red-50" title="移除此地段" onclick="removeSection('${sectionData.id}')">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
+                </div>
+                <div class="flex items-center justify-between px-1">
+                    <div class="flex items-center space-x-1.5 cursor-pointer">
+                        <input type="checkbox" id="toggle-${sectionData.id}-parcel" checked class="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 cursor-pointer">
+                        <label for="toggle-${sectionData.id}-parcel" class="text-sm font-medium text-gray-700 cursor-pointer select-none whitespace-nowrap">地號</label>
+                    </div>
+                    <div class="flex items-center space-x-1.5 cursor-pointer">
+                        <input type="checkbox" id="toggle-${sectionData.id}-boundary" checked class="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 cursor-pointer">
+                        <label for="toggle-${sectionData.id}-boundary" class="text-sm font-medium text-gray-700 cursor-pointer select-none whitespace-nowrap">地籍線</label>
+                    </div>
+                    <div class="flex items-center space-x-1.5 cursor-pointer">
+                        <input type="checkbox" id="toggle-${sectionData.id}-controlpoint" checked class="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 cursor-pointer">
+                        <label for="toggle-${sectionData.id}-controlpoint" class="text-sm font-medium text-gray-700 cursor-pointer select-none whitespace-nowrap">控制點</label>
+                    </div>
+                </div>
+            `;
+            loadedSectionsContainer.insertBefore(card, loadedSectionsContainer.firstChild);
+
+            ['parcel', 'boundary', 'controlpoint'].forEach(type => {
+                const checkbox = card.querySelector(`#toggle-${sectionData.id}-${type}`);
+                checkbox.addEventListener('change', (e) => loadedSectionLayers[sectionData.id][type].setVisible(e.target.checked));
+            });
+
+            const format = new ol.format.GeoJSON();
+            const mapTypes = { parcel: sectionData.layers.parcel, boundary: sectionData.layers.boundary, controlpoint: sectionData.layers.control };
+            const vectorSourcesToFit = [];
+
+            for (const [layerType, fileId] of Object.entries(mapTypes)) {
+                if (fileId) {
+                    try {
+                        // 夾帶 userAuthToken 以便後端驗證身分
+                        const response = await fetch(`${API_URL}?action=getGeoJSON&token=${userAuthToken}&fileId=${fileId}`);
+                        const geojsonData = await response.json();
+
+                        if (!geojsonData.error) {
+                            const features = format.readFeatures(geojsonData, { dataProjection: 'EPSG:3826', featureProjection: 'EPSG:3857' });
+                            layers[layerType].getSource().addFeatures(features);
+                            vectorSourcesToFit.push(layers[layerType].getSource());
+                        } else {
+                            console.error(`[${layerType}] 存取被拒絕:`, geojsonData.error);
+                        }
+                    } catch (error) {
+                        console.error(`[${layerType}] 讀取失敗:`, error);
+                    }
+                }
+            }
+
+            if (vectorSourcesToFit.length > 0) {
+                let combinedExtent = ol.extent.createEmpty();
+                vectorSourcesToFit.forEach(source => {
+                    if(source.getFeatures().length > 0) ol.extent.extend(combinedExtent, source.getExtent());
+                });
+                if (!ol.extent.isEmpty(combinedExtent)) map.getView().fit(combinedExtent, { padding: [50, 50, 50, 50], duration: 1000 });
+            }
+        }
+
+        window.removeSection = function(sectionId) {
+            if (loadedSectionLayers[sectionId]) {
+                map.removeLayer(loadedSectionLayers[sectionId].parcel);
+                map.removeLayer(loadedSectionLayers[sectionId].boundary);
+                map.removeLayer(loadedSectionLayers[sectionId].controlpoint);
+                delete loadedSectionLayers[sectionId];
+            }
+            const card = document.getElementById(`section-card-${sectionId}`);
+            if (card) {
+                card.style.transform = 'scale(0.95)';
+                card.style.opacity = '0';
+                setTimeout(() => card.remove(), 200);
+            }
+        };
+
+        // ==========================================
+        //  UI 互動與小工具 (維持原樣)
+        // ==========================================
+        const baseLayersContainer = document.getElementById('base-layers-container');
+        baseLayersInfo.forEach((info) => {
+            const div = document.createElement('div');
+            div.className = 'flex items-center space-x-3 p-2 rounded-lg hover:bg-gray-100/50 transition-colors cursor-pointer';
+            div.innerHTML = `<input type="radio" id="base_${info.id}" name="basemap" class="w-4 h-4 text-blue-600 focus:ring-blue-500 cursor-pointer" ${info.visible ? 'checked' : ''}><label for="base_${info.id}" class="text-sm font-medium text-gray-700 cursor-pointer select-none flex-1">${info.name}</label>`;
+            div.addEventListener('click', () => {
+                document.getElementById(`base_${info.id}`).checked = true;
+                baseLayersInfo.forEach(b => mapLayers[b.id].setVisible(b.id === info.id));
+            });
+            baseLayersContainer.appendChild(div);
+        });
+
+        const overlayLayersContainer = document.getElementById('overlay-layers-container');
+        overlayLayersInfo.forEach((info) => {
+            const div = document.createElement('div');
+            div.className = 'flex flex-col p-2 rounded-lg hover:bg-gray-100/50 transition-colors';
+            
+            const topDiv = document.createElement('div');
+            topDiv.className = 'flex items-center space-x-3 cursor-pointer';
+            topDiv.innerHTML = `<input type="checkbox" id="overlay_${info.id}" class="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 cursor-pointer"><label for="overlay_${info.id}" class="text-sm font-medium text-gray-700 cursor-pointer select-none flex-1">${info.name}</label>`;
+            
+            const sliderDiv = document.createElement('div');
+            sliderDiv.className = 'mt-2 ml-7 px-3 py-2 flex items-center gap-3 hidden bg-gray-100/80 rounded-md border border-gray-200/50 shadow-inner transition-all';
+            sliderDiv.innerHTML = `<svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg><input type="range" id="opacity_${info.id}" min="0" max="100" value="100" class="w-full h-1.5 bg-gray-400 rounded-lg appearance-none cursor-pointer accent-blue-600"><span id="opacity_val_${info.id}" class="text-sm font-bold text-gray-800 w-12 text-right tabular-nums">100%</span>`;
+
+            const checkbox = topDiv.querySelector('input');
+            checkbox.addEventListener('change', () => { mapLayers[info.id].setVisible(checkbox.checked); sliderDiv.classList.toggle('hidden', !checkbox.checked); });
+            const slider = sliderDiv.querySelector('input');
+            const opacityText = sliderDiv.querySelector('span');
+            slider.addEventListener('input', (e) => { opacityText.innerText = e.target.value + '%'; mapLayers[info.id].setOpacity(e.target.value / 100); });
+
+            div.appendChild(topDiv); div.appendChild(sliderDiv); overlayLayersContainer.appendChild(div);
+        });
+
+        const layerBtn = document.getElementById('layer-toggle-btn');
+        const layerPanel = document.getElementById('layer-panel');
+        let layerPanelOpen = false;
+        layerBtn.addEventListener('click', () => {
+            layerPanelOpen = !layerPanelOpen;
+            if (layerPanelOpen) { layerPanel.classList.remove('hidden'); setTimeout(() => { layerPanel.classList.remove('opacity-0', 'translate-y-2'); layerPanel.classList.add('opacity-100', 'translate-y-0'); }, 10); } 
+            else { layerPanel.classList.remove('opacity-100', 'translate-y-0'); layerPanel.classList.add('opacity-0', 'translate-y-2'); setTimeout(() => layerPanel.classList.add('hidden'), 300); }
+        });
+
+        const coordText = document.getElementById('coord-text');
+        const coordDisplay = document.getElementById('coord-display');
+        let currentCoordMode = 0; let lastCoordinate = centerCoords;
+        const updateCoordinateDisplay = (coords) => {
+            if(!coords) return;
+            const wgs84 = ol.proj.transform(coords, 'EPSG:3857', 'EPSG:4326');
+            if (currentCoordMode === 0) { const twd97 = ol.proj.transform(coords, 'EPSG:3857', 'EPSG:3826'); coordText.innerText = `X: ${twd97[0].toFixed(2)}, Y: ${twd97[1].toFixed(2)}`; } 
+            else if (currentCoordMode === 1) coordText.innerText = `Lon: ${wgs84[0].toFixed(5)}, Lat: ${wgs84[1].toFixed(5)}`;
+            else coordText.innerText = `${toDMS(wgs84[0], false)}, ${toDMS(wgs84[1], true)}`;
+        };
+        map.on('pointermove', (e) => { lastCoordinate = e.coordinate; updateCoordinateDisplay(lastCoordinate); });
+        coordDisplay.addEventListener('click', () => { currentCoordMode = (currentCoordMode + 1) % 3; updateCoordinateDisplay(lastCoordinate); });
+
+        const scaleInput = document.getElementById('scale-input');
+        const scaleDropdown = document.getElementById('scale-dropdown');
+        const presetScales = [500, 1000, 1200, 2500, 5000, 10000, 25000];
+        const updateScaleInfo = () => { if (document.activeElement === scaleInput) return; const scale = Math.round(map.getView().getResolution() * 39.37 * 96); scaleInput.value = scale.toLocaleString(); };
+        map.on('moveend', updateScaleInfo); map.once('postrender', updateScaleInfo); 
+        presetScales.forEach(scale => {
+            const item = document.createElement('div');
+            item.className = 'px-4 py-2 hover:bg-blue-50/80 hover:text-blue-600 cursor-pointer text-center transition-colors font-medium text-gray-700';
+            item.innerText = scale.toLocaleString();
+            item.addEventListener('mousedown', (e) => { e.preventDefault(); applyScale(scale); });
+            scaleDropdown.appendChild(item);
+        });
+        const applyScale = (presetValue = null) => {
+            let newScale = presetValue !== null ? presetValue : parseInt(scaleInput.value.replace(/,/g, ''), 10);
+            if (!isNaN(newScale) && newScale > 0) map.getView().animate({ resolution: newScale / (39.37 * 96), duration: 500 });
+            else updateScaleInfo();
+            scaleDropdown.classList.add('hidden'); scaleInput.blur();
+        };
+        scaleInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyScale(); });
+        scaleInput.addEventListener('blur', () => { setTimeout(() => scaleDropdown.classList.add('hidden'), 100); applyScale(); });
+        scaleInput.addEventListener('focus', () => { scaleDropdown.classList.remove('hidden'); scaleInput.value = scaleInput.value.replace(/,/g, ''); scaleInput.select(); });
+
+        const contextMenu = document.getElementById('context-menu');
+        let contextCoordinate = null;
+        map.getViewport().addEventListener('contextmenu', (e) => {
+            e.preventDefault(); contextCoordinate = map.getEventCoordinate(e); contextMenu.classList.remove('hidden');
+            let left = e.clientX, top = e.clientY;
+            if (left + contextMenu.offsetWidth > window.innerWidth) left = window.innerWidth - contextMenu.offsetWidth - 5;
+            if (top + contextMenu.offsetHeight > window.innerHeight) top = window.innerHeight - contextMenu.offsetHeight - 5;
+            contextMenu.style.left = `${left}px`; contextMenu.style.top = `${top}px`;
+        });
+        document.addEventListener('click', (e) => { if (!contextMenu.contains(e.target)) contextMenu.classList.add('hidden'); });
+
+        window.copyCoord = (type) => {
+            if (!contextCoordinate) return;
+            const wgs84 = ol.proj.transform(contextCoordinate, 'EPSG:3857', 'EPSG:4326');
+            let textToCopy = '';
+            if (type === 'twd97') { const twd97 = ol.proj.transform(contextCoordinate, 'EPSG:3857', 'EPSG:3826'); textToCopy = `${twd97[0].toFixed(3)}, ${twd97[1].toFixed(3)}`; } 
+            else if (type === 'wgs84') textToCopy = `${wgs84[0].toFixed(6)}, ${wgs84[1].toFixed(6)}`;
+            else if (type === 'dms') textToCopy = `${toDMS(wgs84[0], false)}, ${toDMS(wgs84[1], true)}`;
+            const tempInput = document.createElement('input'); document.body.appendChild(tempInput); tempInput.value = textToCopy; tempInput.select(); document.execCommand('copy'); document.body.removeChild(tempInput);
+            document.querySelectorAll('[id^="copy-"][id$="-feedback"]').forEach(el => { if (el.id === `copy-${type}-feedback`) { el.innerText = '已複製!'; el.classList.remove('hidden'); } });
+            setTimeout(() => contextMenu.classList.add('hidden'), 400);
+        };
+        window.navigateToPoint = () => {
+            if (!contextCoordinate) return;
+            const wgs84 = ol.proj.transform(contextCoordinate, 'EPSG:3857', 'EPSG:4326');
+            window.open(`https://www.google.com/maps/dir/?api=1&destination=${wgs84[1]},${wgs84[0]}`, '_blank');
+            contextMenu.classList.add('hidden');
+        };
+
+        const locateBtn = document.getElementById('locate-btn'), targetIcon = locateBtn.querySelectorAll('.target-icon'), loadingIcon = locateBtn.querySelector('.loading-icon'), errorDot = document.getElementById('locate-error-dot');
+        const geolocation = new ol.Geolocation({ trackingOptions: { enableHighAccuracy: true }, projection: map.getView().getProjection() });
+        const positionFeature = new ol.Feature(); positionFeature.setStyle(new ol.style.Style({ image: new ol.style.Circle({ radius: 7, fill: new ol.style.Fill({ color: '#3b82f6' }), stroke: new ol.style.Stroke({ color: '#fff', width: 2 }) }) }));
+        const accuracyFeature = new ol.Feature(); accuracyFeature.setStyle(new ol.style.Style({ fill: new ol.style.Fill({ color: 'rgba(59, 130, 246, 0.15)' }), stroke: new ol.style.Stroke({ color: 'rgba(59, 130, 246, 0.4)', width: 1 }) }));
+        const vectorSource = new ol.source.Vector({ features: [accuracyFeature, positionFeature] });
+        map.addLayer(new ol.layer.Vector({ source: vectorSource, zIndex: 999 }));
+
+        geolocation.on('change:position', () => { const coords = geolocation.getPosition(); positionFeature.setGeometry(coords ? new ol.geom.Point(coords) : null); });
+        geolocation.on('change:accuracyGeometry', () => accuracyFeature.setGeometry(geolocation.getAccuracyGeometry()));
+        geolocation.on('error', (error) => { console.error('定位失敗:', error.message); errorDot.classList.remove('hidden'); toggleLocateUI(false); alert('無法取得您的位置。請確認設備已開啟定位功能。'); });
+
+        function toggleLocateUI(isLoading) {
+            if (isLoading) { targetIcon.forEach(icon => icon.classList.add('hidden')); loadingIcon.classList.remove('hidden'); locateBtn.classList.add('animate-pulse'); } 
+            else { targetIcon.forEach(icon => icon.classList.remove('hidden')); loadingIcon.classList.add('hidden'); locateBtn.classList.remove('animate-pulse'); }
+        }
+
+        let isTracking = false;
+        locateBtn.addEventListener('click', () => {
+            errorDot.classList.add('hidden'); 
+            if (isTracking) {
+                isTracking = false; geolocation.setTracking(false); positionFeature.setGeometry(null); accuracyFeature.setGeometry(null); 
+                locateBtn.classList.remove('text-blue-600', 'bg-blue-50'); locateBtn.classList.add('text-gray-700'); toggleLocateUI(false);
+            } else {
+                isTracking = true; toggleLocateUI(true); locateBtn.classList.remove('text-gray-700'); locateBtn.classList.add('text-blue-600', 'bg-blue-50'); geolocation.setTracking(true); 
+                if (geolocation.getPosition()) { toggleLocateUI(false); flyToUserLocation(); } 
+                else { geolocation.once('change:position', () => { if (!isTracking) return; toggleLocateUI(false); flyToUserLocation(); }); }
+            }
+        });
+        function flyToUserLocation() { const coords = geolocation.getPosition(); if (coords) map.getView().animate({ center: coords, zoom: 17, duration: 1500 }); }
+    </script>
+</body>
+</html>
